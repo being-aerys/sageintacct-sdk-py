@@ -174,6 +174,29 @@ class ApiBase:
 
         return requests.post(api_url, headers=api_headers, data=body.encode('utf-8'))
 
+    def __post_request_for_parsed_response(self, dict_body: dict, api_url: str):
+        """Parse raw HTTP post request's raw response.
+
+        Parameters:
+            data (dict): HTTP POST body data for the wanted API.
+            api_url (str): Url for the wanted API endpoint.
+
+        Returns:
+        tuple: A tuple containing:
+            - int: The HTTP status code of the raw response.
+            - dict: The parsed response in dictionary form.
+        """
+
+        raw_response = self.__post_request_for_raw_response(dict_body, api_url)
+        try:
+            parsed_xml = xmltodict.parse(raw_response.text, force_list={self.__dimension})
+        except:
+            #bad xml format from Sage Intacct fix
+            raw_response = '<root>' + raw_response.text + '</root>'
+            parsed_xml = xmltodict.parse(raw_response, force_list={self.__dimension})['root']
+        parsed_response = json.loads(json.dumps(parsed_xml))
+
+        return raw_response.status_code, parsed_response
 
     def __post_request(self, dict_body: dict, api_url: str):
         """Create an HTTP post request and handle HTTP errors.
@@ -186,16 +209,9 @@ class ApiBase:
             A response from the request (dict).
         """
 
-        raw_response = self.__post_request_for_raw_response(dict_body, api_url)
-        try:
-            parsed_xml = xmltodict.parse(raw_response.text, force_list={self.__dimension})
-        except:
-            #bad xml format from Sage Intacct fix
-            raw_response = '<root>' + raw_response.text + '</root>'
-            parsed_xml = xmltodict.parse(raw_response, force_list={self.__dimension})['root']
-        parsed_response = json.loads(json.dumps(parsed_xml))
+        status_code, parsed_response = self.__post_request_for_parsed_response(dict_body, api_url)
 
-        if raw_response.status_code == 200:
+        if status_code == 200:
             if parsed_response['response']['control']['status'] == 'success':
                 api_response = parsed_response['response']['operation']
 
@@ -242,25 +258,25 @@ class ApiBase:
             if 'errormessage' in parsed_response['response']:
                 parsed_response = parsed_response['response']['errormessage']
 
-        if raw_response.status_code == 400:
+        if status_code == 400:
             if 'error' in parsed_response and isinstance(parsed_response['error'], dict) and 'errorno' in parsed_response['error'] and parsed_response['error']['errorno'] == 'invalidRequest':
                 raise InvalidTokenError('Invalid token / Incorrect credentials', parsed_response)
             else:
                 raise WrongParamsError('Some of the parameters are wrong', parsed_response)
 
-        if raw_response.status_code == 401:
+        if status_code == 401:
             raise InvalidTokenError('Invalid token / Incorrect credentials', parsed_response)
 
-        if raw_response.status_code == 403:
+        if status_code == 403:
             raise NoPrivilegeError('Forbidden, the user has insufficient privilege', parsed_response)
 
-        if raw_response.status_code == 404:
+        if status_code == 404:
             raise NotFoundItemError('Not found item with ID', parsed_response)
 
-        if raw_response.status_code == 498:
+        if status_code == 498:
             raise ExpiredTokenError('Expired token, try to refresh it', parsed_response)
 
-        if raw_response.status_code == 500:
+        if status_code == 500:
             raise InternalServerError('Internal server error', parsed_response)
 
         raise SageIntacctSDKError('Error: {0}'.format(parsed_response))
